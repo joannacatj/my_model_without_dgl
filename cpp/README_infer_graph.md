@@ -170,20 +170,33 @@
 
 ---
 
-## 7. Python vs CUDA 一致性测试示例
+## 7. Python / CUDA 双文件手工比对示例（无 pybind）
 
-示例脚本：`cpp/tests/test_encoder_parity_example.py`
+提供两个独立文件，分别直接输出结果，供你人工比对：
+
+1. Python: `cpp/tests/encoder_python_example.py`
+2. CUDA: `cpp/tests/encoder_cuda_example.cu`
+
+Python 运行：
 
 ```bash
-python cpp/tests/test_encoder_parity_example.py \
-  --checkpoint checkpoints/wikics/gin_checkpoint.pth \
-  --config-path .
+python cpp/tests/encoder_python_example.py
 ```
 
-该脚本流程：
+CUDA 编译与运行：
 
-1. 加载 Python `GraphDecoder.encoder` 作为基线输出。
-2. 调用 CUDA 扩展 `neugn_encoder_cuda_ext.run_encoder(...)` 获取 CUDA 输出。
-3. 计算并打印 `graph_feature` 与 `all_node_features` 的 `max_abs_diff`。
+```bash
+nvcc -std=c++17 \
+  cpp/tests/encoder_cuda_example.cu \
+  cpp/src/encoder/encoder_cuda_kernels.cu \
+  cpp/src/encoder/graph_encoder_cuda.cu \
+  -Icpp/src/encoder -o /tmp/encoder_cuda_example
 
-> 注意：脚本假定你已将 `cpp/src/encoder/*` 通过 pybind 暴露为 `neugn_encoder_cuda_ext`。本文先提供“可对齐的测试范式”，便于你马上验证。 
+/tmp/encoder_cuda_example
+```
+
+说明：
+
+- 两个文件使用同一组固定图结构和固定参数。
+- 输出字段一致：`graph_feature` 与 `all_node_features`。
+- 你可以直接人工逐项比对数值，验证 Python 与 CUDA 路径是否一致。
