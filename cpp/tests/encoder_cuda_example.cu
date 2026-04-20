@@ -104,6 +104,16 @@ int64_t ParseConfigInt(const std::string& cfg, const std::string& key, int64_t d
   return def;
 }
 
+int64_t InferEncoderLayers(const std::string& manifest) {
+  std::regex re(R"(encoder\.batch_norms\.(\d+)\.weight)");
+  int64_t max_idx = -1;
+  for (auto it = std::sregex_iterator(manifest.begin(), manifest.end(), re); it != std::sregex_iterator(); ++it) {
+    int64_t idx = std::stoll((*it)[1].str());
+    if (idx > max_idx) max_idx = idx;
+  }
+  return max_idx + 1;
+}
+
 float* LoadFloatTensor(const std::vector<uint8_t>& bin, const TensorMeta& meta) {
   if (meta.offset < 0 || meta.nbytes < 0 || static_cast<size_t>(meta.offset + meta.nbytes) > bin.size()) {
     throw std::runtime_error("invalid offset/nbytes for tensor: " + meta.name);
@@ -142,7 +152,10 @@ int main(int argc, char** argv) {
   const auto bin = ReadBinary(weights_path);
 
   const int64_t dim = ParseConfigInt(cfg, "dim", 512);
-  const int64_t n_layers = ParseConfigInt(cfg, "n_layers", 1);
+  const int64_t n_layers = InferEncoderLayers(manifest);
+  if (n_layers <= 0) {
+    throw std::runtime_error("failed to infer encoder layer count from manifest");
+  }
 
   // 与 python 验证脚本一致的小图
   const int64_t num_nodes = 4;
