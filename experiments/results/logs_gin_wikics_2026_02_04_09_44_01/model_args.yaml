@@ -1,0 +1,30 @@
+encoder_config:
+  encoder_name: gin
+  encoder_layers: 3
+  graph_feature_dim: 512
+  fixed_input_dim: 50
+  rwse_dim: 20
+decoder_config:
+  decoder_type: llama
+  dim: 512
+  n_layers: 6
+  n_heads: 8
+  n_kv_heads: 8
+  multiple_of: 256
+  ffn_dim_multiplier: null
+  norm_eps: 1.0e-05
+  sub_node_id_size: 64
+  pos_size: 1024
+  max_spd: 20
+gt_config:
+  num_fingerprints: 20
+dataprocess_config:
+  data_obtain_method: random_walk
+  data_process_method: eular
+  walk_len: 32
+  neighbor_fanouts:
+  - 10
+  - 10
+  num_negatives: 64
+graph_path: /home/hujiayue/dataset/wikics
+checkpoint_path: /home/hujiayue/my_model_without_dgl/checkpoints

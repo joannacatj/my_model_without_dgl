@@ -1,0 +1,39 @@
+encoder_config:
+  encoder_name: 'gin'           # 基础 GNN 类型
+  encoder_layers: 3             # GNN 层数
+  graph_feature_dim: 512        # 必须与 decoder_config.dim 一致
+  fixed_input_dim: 50        # Hash 桶大小 (此前修改过)
+  
+  # [新增] 结构感知参数
+  rwse_dim: 20                  # RWSE 步数 (k_steps). 设为 0 则关闭 RWSE。建议 16-20。
+
+decoder_config:
+  decoder_type: 'llama'
+  dim: 512                      # Model Dimension
+  n_layers: 6
+  n_heads: 8
+  n_kv_heads: 8
+  multiple_of: 256
+  ffn_dim_multiplier: null
+  norm_eps: 1.0e-5
+  
+  # 位置与结构编码参数
+  sub_node_id_size: 64          # 子图内相对 ID 最大值
+  pos_size: 1024                # Transformer 最大序列长度
+  
+  # [新增] 距离感知参数
+  max_spd: 20                   # 最短路径距离截断值。超过此距离的节点对将被视为"远距离/无连接"。建议 20。
+
+gt_config:
+  num_fingerprints: 20          # (保留占位)
+
+dataprocess_config:
+  data_obtain_method: 'random_walk'
+  data_process_method: 'eular'
+  walk_len: 32                  # 随机游走采样长度
+  neighbor_fanouts: [10, 10]
+  num_negatives: 64             # InfoNCE 负样本数量 (此前修改过)
+
+# 路径配置 (请保持你的实际路径)
+graph_path: '/home/hujiayue/dataset/wikics'
+checkpoint_path: '/home/hujiayue/my_model_without_dgl/checkpoints'
