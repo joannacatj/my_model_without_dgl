@@ -143,3 +143,47 @@
 
 - 权重命名与顺序以 `tools/export_for_cpp.py` 的 `weights_manifest.json` 为准。
 - C++ 端按 `name/shape/dtype/offset` 逐项装载，可先完成结构对齐，再接 CUDA kernel/框架（LibTorch/TensorRT/自研）。
+
+---
+
+## 6. CUDA Encoder 实现位置与对齐点
+
+已在 `cpp/src/encoder/` 提供 CUDA 版本实现：
+
+- `encoder_cuda_kernels.cuh/.cu`
+  - `PureGINAggregateCUDA`: `out = (1+eps)*x + Sum(neighbor)`（供 GIN MLP 前使用）
+  - `PureGraphConvAggregateCUDA`: `D^-1/2 (A+I) D^-1/2 X` 聚合
+  - `GlobalMeanPoolCUDA`
+  - `DegreeEmbeddingForwardCUDA`
+  - `ValueProjectionForwardCUDA`
+  - `RWSEProjectionForwardCUDA`
+  - `BatchNormInferenceReLUCUDA`（固定 running mean/var）
+- `graph_encoder_cuda.h/.cu`
+  - `GraphEncoderCUDA::Forward` 串联层次：
+    `value_projection + degree_embedding (+rwse)` -> conv -> `BN(infer)+ReLU` -> `global_mean_pool`
+
+实现细节：
+
+- 图聚合主路径使用 **CSR**（`BuildCSRFromCOO`）以对齐“优先 CSR”要求。
+- BN 推理模式只用 running 均值/方差，不更新统计量。
+- 层后处理顺序与 Python 对齐：每层后 `BN + ReLU`。
+
+---
+
+## 7. Python vs CUDA 一致性测试示例
+
+示例脚本：`cpp/tests/test_encoder_parity_example.py`
+
+```bash
+python cpp/tests/test_encoder_parity_example.py \
+  --checkpoint checkpoints/wikics/gin_checkpoint.pth \
+  --config-path .
+```
+
+该脚本流程：
+
+1. 加载 Python `GraphDecoder.encoder` 作为基线输出。
+2. 调用 CUDA 扩展 `neugn_encoder_cuda_ext.run_encoder(...)` 获取 CUDA 输出。
+3. 计算并打印 `graph_feature` 与 `all_node_features` 的 `max_abs_diff`。
+
+> 注意：脚本假定你已将 `cpp/src/encoder/*` 通过 pybind 暴露为 `neugn_encoder_cuda_ext`。本文先提供“可对齐的测试范式”，便于你马上验证。 
