@@ -182,23 +182,36 @@
 Python 运行：
 
 ```bash
-python cpp/tests/encoder_python_example.py
+python cpp/tests/encoder_python_example.py \
+  --checkpoint checkpoints/wikics/gin_checkpoint.pth \
+  --config-path .
 ```
 
 CUDA 编译与运行：
 
 ```bash
+# 先导出参数
+python tools/export_for_cpp.py \
+  --checkpoint checkpoints/wikics/gin_checkpoint.pth \
+  --config-path . \
+  --output-dir checkpoints/wikics/export_cpp
+
+# 编译
 nvcc -std=c++17 \
   cpp/tests/encoder_cuda_example.cu \
   cpp/src/encoder/encoder_cuda_kernels.cu \
   cpp/src/encoder/graph_encoder_cuda.cu \
   -Icpp/src/encoder -o /tmp/encoder_cuda_example
 
-/tmp/encoder_cuda_example
+# 运行（从导出参数加载）
+/tmp/encoder_cuda_example \
+  --manifest checkpoints/wikics/export_cpp/weights_manifest.json \
+  --weights checkpoints/wikics/export_cpp/graphdecoder_weights.bin \
+  --config checkpoints/wikics/export_cpp/export_config.json
 ```
 
 说明：
 
-- 两个文件使用同一组固定图结构和固定参数。
-- 输出字段一致：`graph_feature` 与 `all_node_features`。
-- 你可以直接人工逐项比对数值，验证 Python 与 CUDA 路径是否一致。
+- Python 端会加载**已训练 checkpoint**并运行真实 `encoder`。
+- CUDA 端会读取**导出参数**（bin + manifest + export_config）并运行 `GraphEncoderCUDA`。
+- 两边使用同一组固定图结构输入，输出字段一致：`graph_feature` 与 `all_node_features`。
