@@ -153,6 +153,7 @@ int main(int argc, char** argv) {
 
   const int64_t dim = ParseConfigInt(cfg, "dim", 512);
   const int64_t n_layers = InferEncoderLayers(manifest);
+  const int64_t rwse_dim = ParseConfigInt(cfg, "rwse_dim", 0);
   if (n_layers <= 0) {
     throw std::runtime_error("failed to infer encoder layer count from manifest");
   }
@@ -169,6 +170,16 @@ int main(int argc, char** argv) {
   int64_t* d_dst = CopyHostToDevice(coo_dst);
   int64_t* d_feat_id = CopyHostToDevice(feat_id);
   int64_t* d_batch = CopyHostToDevice(batch_idx);
+  float* d_rwse = nullptr;
+  if (rwse_dim > 0) {
+    std::vector<float> rwse(static_cast<size_t>(num_nodes * rwse_dim));
+    for (int64_t i = 0; i < num_nodes; ++i) {
+      for (int64_t j = 0; j < rwse_dim; ++j) {
+        rwse[static_cast<size_t>(i * rwse_dim + j)] = 0.01f * static_cast<float>((i + 1) * (j + 1));
+      }
+    }
+    d_rwse = CopyHostToDevice(rwse);
+  }
 
   EncoderWeights weights;
   auto vp_w = FindTensorMeta(manifest, "encoder.value_projection.weight");
@@ -250,7 +261,7 @@ int main(int argc, char** argv) {
   io.batch_idx = d_batch;
   io.num_graphs = 1;
   io.feat_id = d_feat_id;
-  io.rwse = nullptr;
+  io.rwse = d_rwse;
   io.graph_feature_out = d_graph_feature;
   io.all_node_feature_out = d_all_nodes;
 
@@ -265,6 +276,14 @@ int main(int argc, char** argv) {
   std::cout << "=== CUDA Trained NeuGN Encoder Output ===\n";
   PrintTensor("graph_feature", h_graph, 1, static_cast<int>(dim));
   PrintTensor("all_node_features", h_nodes, static_cast<int>(num_nodes), static_cast<int>(dim));
+
+  if (d_rwse) cudaFree(d_rwse);
+  cudaFree(d_src);
+  cudaFree(d_dst);
+  cudaFree(d_feat_id);
+  cudaFree(d_batch);
+  cudaFree(d_graph_feature);
+  cudaFree(d_all_nodes);
 
   return 0;
 }

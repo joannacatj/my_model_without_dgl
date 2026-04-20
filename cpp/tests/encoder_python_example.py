@@ -38,9 +38,12 @@ def build_demo_graph(args, device: torch.device):
 
     rwse_dim = getattr(args.encoder_config, "rwse_dim", 0)
     if rwse_dim > 0:
-        # 为保证可重复，使用固定种子和固定输入
-        torch.manual_seed(0)
-        graph.ndata["rwse"] = torch.randn(graph.num_nodes, rwse_dim, device=device)
+        # 与 C++ 侧保持一致：使用确定性构造而非随机数
+        rwse = torch.empty(graph.num_nodes, rwse_dim, dtype=torch.float32, device=device)
+        for i in range(graph.num_nodes):
+            for j in range(rwse_dim):
+                rwse[i, j] = 0.01 * (i + 1) * (j + 1)
+        graph.ndata["rwse"] = rwse
     return graph
 
 
