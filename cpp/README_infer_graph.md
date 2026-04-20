@@ -165,6 +165,7 @@
 实现细节：
 
 - 图聚合主路径使用 **CSR**（`BuildCSRFromCOO`）以对齐“优先 CSR”要求。
+- COO->CSR 已增加 **CUB device 侧构建** 快路径（`DeviceRadixSort + DeviceRunLengthEncode + DeviceScan`），减少 host 参与与内存往返。
 - BN 推理模式只用 running 均值/方差，不更新统计量。
 - 层后处理顺序与 Python 对齐：每层后 `BN + ReLU`。
 - `global_mean_pool` 新增 **CUB segmented reduce** 快路径（`cub::DeviceSegmentedReduce::Sum`），在 batch 索引按图分组时可替代原子加汇聚，提升吞吐；未分组时自动回退到原实现，保证结果正确。

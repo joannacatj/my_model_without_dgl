@@ -198,6 +198,19 @@ __global__ void WriteColumnNormalizedKernel(const float* col_sum,
   out_graph[static_cast<int64_t>(g) * feat_dim + col] = col_sum[g] / cnt;
 }
 
+__global__ void ScatterCSRCountsKernel(const int64_t* unique_keys,
+                                       const int64_t* run_counts,
+                                       int num_runs,
+                                       int64_t num_nodes,
+                                       int64_t* row_ptr) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= num_runs) return;
+  int64_t key = unique_keys[i];
+  if (key >= 0 && key < num_nodes) {
+    row_ptr[key + 1] = run_counts[i];
+  }
+}
+
 }  // namespace
 
 void BuildCSRFromCOO(int64_t num_nodes,
@@ -227,6 +240,77 @@ void BuildCSRFromCOO(int64_t num_nodes,
     const int64_t src = coo_src[e];
     (*col_idx)[cursor[dst]++] = src;
   }
+}
+
+void BuildCSRFromCOOCUDA(int64_t num_nodes,
+                         const int64_t* d_coo_src,
+                         const int64_t* d_coo_dst,
+                         int64_t num_edges,
+                         int64_t* d_row_ptr,
+                         int64_t* d_col_idx) {
+  // 1) Sort by dst key to make destination-centered CSR col_idx.
+  int64_t* d_keys_in = nullptr;
+  int64_t* d_vals_in = nullptr;
+  int64_t* d_keys_out = nullptr;
+  int64_t* d_vals_out = nullptr;
+  cudaMalloc(&d_keys_in, sizeof(int64_t) * num_edges);
+  cudaMalloc(&d_vals_in, sizeof(int64_t) * num_edges);
+  cudaMalloc(&d_keys_out, sizeof(int64_t) * num_edges);
+  cudaMalloc(&d_vals_out, sizeof(int64_t) * num_edges);
+  cudaMemcpy(d_keys_in, d_coo_dst, sizeof(int64_t) * num_edges, cudaMemcpyDeviceToDevice);
+  cudaMemcpy(d_vals_in, d_coo_src, sizeof(int64_t) * num_edges, cudaMemcpyDeviceToDevice);
+
+  void* sort_temp = nullptr;
+  size_t sort_temp_bytes = 0;
+  cub::DeviceRadixSort::SortPairs(
+      sort_temp, sort_temp_bytes, d_keys_in, d_keys_out, d_vals_in, d_vals_out, num_edges);
+  cudaMalloc(&sort_temp, sort_temp_bytes);
+  cub::DeviceRadixSort::SortPairs(
+      sort_temp, sort_temp_bytes, d_keys_in, d_keys_out, d_vals_in, d_vals_out, num_edges);
+
+  // col_idx is sorted src by dst segments.
+  cudaMemcpy(d_col_idx, d_vals_out, sizeof(int64_t) * num_edges, cudaMemcpyDeviceToDevice);
+
+  // 2) Run-length encode sorted keys -> unique dst ids and counts.
+  int64_t* d_unique = nullptr;
+  int64_t* d_counts = nullptr;
+  int* d_num_runs = nullptr;
+  cudaMalloc(&d_unique, sizeof(int64_t) * num_edges);
+  cudaMalloc(&d_counts, sizeof(int64_t) * num_edges);
+  cudaMalloc(&d_num_runs, sizeof(int));
+
+  void* rle_temp = nullptr;
+  size_t rle_temp_bytes = 0;
+  cub::DeviceRunLengthEncode::Encode(
+      rle_temp, rle_temp_bytes, d_keys_out, d_unique, d_counts, d_num_runs, num_edges);
+  cudaMalloc(&rle_temp, rle_temp_bytes);
+  cub::DeviceRunLengthEncode::Encode(
+      rle_temp, rle_temp_bytes, d_keys_out, d_unique, d_counts, d_num_runs, num_edges);
+
+  int h_num_runs = 0;
+  cudaMemcpy(&h_num_runs, d_num_runs, sizeof(int), cudaMemcpyDeviceToHost);
+
+  // 3) row_ptr: scatter counts at [key+1], then inclusive-scan.
+  cudaMemset(d_row_ptr, 0, sizeof(int64_t) * (num_nodes + 1));
+  ScatterCSRCountsKernel<<<BlocksFor(h_num_runs), kThreads>>>(
+      d_unique, d_counts, h_num_runs, num_nodes, d_row_ptr);
+
+  void* scan_temp = nullptr;
+  size_t scan_temp_bytes = 0;
+  cub::DeviceScan::InclusiveSum(scan_temp, scan_temp_bytes, d_row_ptr, d_row_ptr, num_nodes + 1);
+  cudaMalloc(&scan_temp, scan_temp_bytes);
+  cub::DeviceScan::InclusiveSum(scan_temp, scan_temp_bytes, d_row_ptr, d_row_ptr, num_nodes + 1);
+
+  cudaFree(scan_temp);
+  cudaFree(rle_temp);
+  cudaFree(sort_temp);
+  cudaFree(d_num_runs);
+  cudaFree(d_counts);
+  cudaFree(d_unique);
+  cudaFree(d_vals_out);
+  cudaFree(d_keys_out);
+  cudaFree(d_vals_in);
+  cudaFree(d_keys_in);
 }
 
 void ValueProjectionForwardCUDA(const int64_t* feat_id,

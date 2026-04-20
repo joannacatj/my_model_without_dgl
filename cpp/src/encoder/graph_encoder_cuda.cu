@@ -32,6 +32,12 @@ __global__ void LinearKernel(const float* x,
   out[idx] = acc;
 }
 
+__global__ void InDegreeFromRowPtrKernel(const int64_t* row_ptr, int64_t num_nodes, int64_t* in_deg) {
+  int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (i >= num_nodes) return;
+  in_deg[i] = row_ptr[i + 1] - row_ptr[i];
+}
+
 inline int BlocksFor(int64_t n) { return static_cast<int>((n + 255) / 256); }
 
 }  // namespace
@@ -61,33 +67,16 @@ void GraphEncoderCUDA::Forward(const EncoderIO& io) const {
                              feat_dim,
                              h_attr);
 
-  // in-degree from CSR row length (destination-centered CSR)
-  // io.coo_src/io.coo_dst are device pointers -> copy to host before BuildCSRFromCOO.
-  std::vector<int64_t> coo_src_host(io.num_edges);
-  std::vector<int64_t> coo_dst_host(io.num_edges);
-  cudaMemcpy(coo_src_host.data(), io.coo_src, sizeof(int64_t) * io.num_edges, cudaMemcpyDeviceToHost);
-  cudaMemcpy(coo_dst_host.data(), io.coo_dst, sizeof(int64_t) * io.num_edges, cudaMemcpyDeviceToHost);
-
-  std::vector<int64_t> row_ptr_host;
-  std::vector<int64_t> col_idx_host;
-  BuildCSRFromCOO(
-      io.num_nodes, coo_src_host.data(), coo_dst_host.data(), io.num_edges, &row_ptr_host, &col_idx_host);
-
   int64_t* d_row_ptr = nullptr;
   int64_t* d_col_idx = nullptr;
   int64_t* d_in_deg = nullptr;
-  cudaMalloc(&d_row_ptr, sizeof(int64_t) * row_ptr_host.size());
-  cudaMalloc(&d_col_idx, sizeof(int64_t) * col_idx_host.size());
+  cudaMalloc(&d_row_ptr, sizeof(int64_t) * (io.num_nodes + 1));
+  cudaMalloc(&d_col_idx, sizeof(int64_t) * io.num_edges);
   cudaMalloc(&d_in_deg, sizeof(int64_t) * io.num_nodes);
-  cudaMemcpy(d_row_ptr, row_ptr_host.data(), sizeof(int64_t) * row_ptr_host.size(), cudaMemcpyHostToDevice);
-  cudaMemcpy(d_col_idx, col_idx_host.data(), sizeof(int64_t) * col_idx_host.size(), cudaMemcpyHostToDevice);
 
-  // small helper on host for in-degree (aligned with Python clamp to [0,1000]).
-  std::vector<int64_t> in_deg_host(io.num_nodes, 0);
-  for (int64_t i = 0; i < io.num_nodes; ++i) {
-    in_deg_host[i] = row_ptr_host[i + 1] - row_ptr_host[i];
-  }
-  cudaMemcpy(d_in_deg, in_deg_host.data(), sizeof(int64_t) * io.num_nodes, cudaMemcpyHostToDevice);
+  // CUB-accelerated device-side COO->CSR build.
+  BuildCSRFromCOOCUDA(io.num_nodes, io.coo_src, io.coo_dst, io.num_edges, d_row_ptr, d_col_idx);
+  InDegreeFromRowPtrKernel<<<BlocksFor(io.num_nodes), 256>>>(d_row_ptr, io.num_nodes, d_in_deg);
 
   DegreeEmbeddingForwardCUDA(d_in_deg,
                              io.num_nodes,

@@ -21,6 +21,15 @@ void BuildCSRFromCOO(int64_t num_nodes,
                      std::vector<int64_t>* row_ptr,
                      std::vector<int64_t>* col_idx);
 
+// Device-side COO -> CSR using CUB sort + run-length encode + scan.
+// Caller owns d_row_ptr/d_col_idx allocations.
+void BuildCSRFromCOOCUDA(int64_t num_nodes,
+                         const int64_t* d_coo_src,
+                         const int64_t* d_coo_dst,
+                         int64_t num_edges,
+                         int64_t* d_row_ptr,   // [num_nodes + 1]
+                         int64_t* d_col_idx);  // [num_edges]
+
 // value_projection(one_hot(feat_id)) equivalent.
 void ValueProjectionForwardCUDA(const int64_t* feat_id,
                                 int64_t num_nodes,
