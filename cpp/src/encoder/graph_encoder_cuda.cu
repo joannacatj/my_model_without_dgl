@@ -62,9 +62,16 @@ void GraphEncoderCUDA::Forward(const EncoderIO& io) const {
                              h_attr);
 
   // in-degree from CSR row length (destination-centered CSR)
+  // io.coo_src/io.coo_dst are device pointers -> copy to host before BuildCSRFromCOO.
+  std::vector<int64_t> coo_src_host(io.num_edges);
+  std::vector<int64_t> coo_dst_host(io.num_edges);
+  cudaMemcpy(coo_src_host.data(), io.coo_src, sizeof(int64_t) * io.num_edges, cudaMemcpyDeviceToHost);
+  cudaMemcpy(coo_dst_host.data(), io.coo_dst, sizeof(int64_t) * io.num_edges, cudaMemcpyDeviceToHost);
+
   std::vector<int64_t> row_ptr_host;
   std::vector<int64_t> col_idx_host;
-  BuildCSRFromCOO(io.num_nodes, io.coo_src, io.coo_dst, io.num_edges, &row_ptr_host, &col_idx_host);
+  BuildCSRFromCOO(
+      io.num_nodes, coo_src_host.data(), coo_dst_host.data(), io.num_edges, &row_ptr_host, &col_idx_host);
 
   int64_t* d_row_ptr = nullptr;
   int64_t* d_col_idx = nullptr;
