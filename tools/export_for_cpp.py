@@ -110,8 +110,9 @@ def _write_bin(weights: Dict[str, torch.Tensor], ordered_names: List[str], outpu
     with output_file.open("wb") as f:
         for name in ordered_names:
             tensor = weights[name].detach().cpu().contiguous()
-            raw = tensor.view(torch.uint8).numpy().tobytes()
-            nbytes = len(raw)
+            # Use NumPy bytes export directly (supports scalar tensors such as BN num_batches_tracked).
+            raw = tensor.numpy().tobytes()
+            nbytes = tensor.numel() * tensor.element_size()
 
             f.write(raw)
             manifest.append(
