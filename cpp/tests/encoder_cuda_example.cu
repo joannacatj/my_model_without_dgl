@@ -5,7 +5,7 @@
 //     cpp/tests/encoder_cuda_example.cu \
 //     cpp/src/encoder/encoder_cuda_kernels.cu \
 //     cpp/src/encoder/graph_encoder_cuda.cu \
-//     -Icpp/src/encoder -o /tmp/encoder_cuda_example
+//     -Icpp/src/encoder -lcublas -o /tmp/encoder_cuda_example
 //
 // 运行:
 //   /tmp/encoder_cuda_example

@@ -1,6 +1,7 @@
 #include "graph_encoder_cuda.h"
 
 #include <cuda_runtime.h>
+#include <cublas_v2.h>
 
 #include <stdexcept>
 
@@ -12,24 +13,12 @@ __global__ void AddKernel(const float* a, const float* b, int64_t total, float* 
   if (idx < total) out[idx] = a[idx] + b[idx];
 }
 
-__global__ void LinearKernel(const float* x,
-                             int64_t rows,
-                             int64_t in_dim,
-                             const float* w,
-                             const float* bias,
-                             int64_t out_dim,
-                             float* out) {
+__global__ void AddBiasKernel(float* out, const float* bias, int64_t rows, int64_t out_dim) {
   int64_t idx = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   int64_t total = rows * out_dim;
   if (idx >= total) return;
-
-  int64_t r = idx / out_dim;
   int64_t d = idx % out_dim;
-  float acc = bias ? bias[d] : 0.0f;
-  for (int64_t k = 0; k < in_dim; ++k) {
-    acc += x[r * in_dim + k] * w[d * in_dim + k];
-  }
-  out[idx] = acc;
+  out[idx] += bias[d];
 }
 
 __global__ void InDegreeFromRowPtrKernel(const int64_t* row_ptr, int64_t num_nodes, int64_t* in_deg) {
@@ -39,6 +28,41 @@ __global__ void InDegreeFromRowPtrKernel(const int64_t* row_ptr, int64_t num_nod
 }
 
 inline int BlocksFor(int64_t n) { return static_cast<int>((n + 255) / 256); }
+
+void RunLinearCublas(cublasHandle_t handle,
+                     const float* x,
+                     int64_t rows,
+                     int64_t in_dim,
+                     const float* w,
+                     const float* bias,
+                     int64_t out_dim,
+                     float* out) {
+  const float alpha = 1.0f;
+  const float beta = 0.0f;
+  // Row-major out = x * w^T.
+  // Use column-major GEMM trick:
+  // C_col(out_dim, rows) = W_col(out_dim, in_dim) * X_col(in_dim, rows).
+  cublasStatus_t st = cublasSgemm(handle,
+                                  CUBLAS_OP_N,
+                                  CUBLAS_OP_N,
+                                  static_cast<int>(out_dim),
+                                  static_cast<int>(rows),
+                                  static_cast<int>(in_dim),
+                                  &alpha,
+                                  w,
+                                  static_cast<int>(out_dim),
+                                  x,
+                                  static_cast<int>(in_dim),
+                                  &beta,
+                                  out,
+                                  static_cast<int>(out_dim));
+  if (st != CUBLAS_STATUS_SUCCESS) {
+    throw std::runtime_error("RunLinearCublas: cublasSgemm failed");
+  }
+  if (bias) {
+    AddBiasKernel<<<BlocksFor(rows * out_dim), 256>>>(out, bias, rows, out_dim);
+  }
+}
 
 }  // namespace
 
@@ -104,6 +128,11 @@ void GraphEncoderCUDA::Forward(const EncoderIO& io) const {
   float* curr = h;
   float* next = nullptr;
   cudaMalloc(&next, sizeof(float) * io.num_nodes * feat_dim);
+  cublasHandle_t cublas = nullptr;
+  if (cublasCreate(&cublas) != CUBLAS_STATUS_SUCCESS) {
+    throw std::runtime_error("GraphEncoderCUDA::Forward: cublasCreate failed");
+  }
+  cublasSetMathMode(cublas, CUBLAS_TENSOR_OP_MATH);
 
   for (const auto& layer : w_.conv_layers) {
     if (layer.use_gin) {
@@ -115,24 +144,36 @@ void GraphEncoderCUDA::Forward(const EncoderIO& io) const {
       cudaMalloc(&t1, sizeof(float) * io.num_nodes * layer.gin_mlp.lin1.out_dim);
       cudaMalloc(&t2, sizeof(float) * io.num_nodes * layer.gin_mlp.lin1.out_dim);
 
-      LinearKernel<<<BlocksFor(io.num_nodes * layer.gin_mlp.lin1.out_dim), 256>>>(
-          next, io.num_nodes, layer.gin_mlp.lin1.in_dim,
-          layer.gin_mlp.lin1.weight, layer.gin_mlp.lin1.bias,
-          layer.gin_mlp.lin1.out_dim, t1);
+      RunLinearCublas(cublas,
+                      next,
+                      io.num_nodes,
+                      layer.gin_mlp.lin1.in_dim,
+                      layer.gin_mlp.lin1.weight,
+                      layer.gin_mlp.lin1.bias,
+                      layer.gin_mlp.lin1.out_dim,
+                      t1);
       BatchNormInferenceReLUCUDA(t1, io.num_nodes, layer.gin_mlp.lin1.out_dim, layer.gin_mlp.bn1, t2);
-      LinearKernel<<<BlocksFor(io.num_nodes * layer.gin_mlp.lin2.out_dim), 256>>>(
-          t2, io.num_nodes, layer.gin_mlp.lin2.in_dim,
-          layer.gin_mlp.lin2.weight, layer.gin_mlp.lin2.bias,
-          layer.gin_mlp.lin2.out_dim, next);
+      RunLinearCublas(cublas,
+                      t2,
+                      io.num_nodes,
+                      layer.gin_mlp.lin2.in_dim,
+                      layer.gin_mlp.lin2.weight,
+                      layer.gin_mlp.lin2.bias,
+                      layer.gin_mlp.lin2.out_dim,
+                      next);
 
       cudaFree(t1);
       cudaFree(t2);
     } else {
       PureGraphConvAggregateCUDA(d_row_ptr, d_col_idx, io.num_nodes, feat_dim, curr, next);
-      LinearKernel<<<BlocksFor(io.num_nodes * layer.gcn_linear.out_dim), 256>>>(
-          next, io.num_nodes, layer.gcn_linear.in_dim,
-          layer.gcn_linear.weight, layer.gcn_linear.bias,
-          layer.gcn_linear.out_dim, next);
+      RunLinearCublas(cublas,
+                      next,
+                      io.num_nodes,
+                      layer.gcn_linear.in_dim,
+                      layer.gcn_linear.weight,
+                      layer.gcn_linear.bias,
+                      layer.gcn_linear.out_dim,
+                      next);
     }
 
     // each layer: BN(inference running stats) + ReLU, align with Python order.
@@ -153,6 +194,7 @@ void GraphEncoderCUDA::Forward(const EncoderIO& io) const {
                      graph_count);
 
   cudaFree(graph_count);
+  cublasDestroy(cublas);
   cudaFree(next);
   cudaFree(h);
   cudaFree(h_attr);
