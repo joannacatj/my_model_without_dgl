@@ -166,7 +166,6 @@
 
 - 图聚合主路径使用 **CSR**（`BuildCSRFromCOO`）以对齐“优先 CSR”要求。
 - COO->CSR 已增加 **CUB device 侧构建** 快路径（`DeviceRadixSort + DeviceRunLengthEncode + DeviceScan`），减少 host 参与与内存往返。
-- 线性层（GIN MLP / GCN linear）已切换到 **cuBLAS SGEMM**（替代逐元素 GEMV 风格 kernel）。
 - BN 推理模式只用 running 均值/方差，不更新统计量。
 - 层后处理顺序与 Python 对齐：每层后 `BN + ReLU`。
 - `global_mean_pool` 新增 **CUB segmented reduce** 快路径（`cub::DeviceSegmentedReduce::Sum`），在 batch 索引按图分组时可替代原子加汇聚，提升吞吐；未分组时自动回退到原实现，保证结果正确。
@@ -193,7 +192,7 @@ nvcc -std=c++17 \
   cpp/tests/encoder_cuda_example.cu \
   cpp/src/encoder/encoder_cuda_kernels.cu \
   cpp/src/encoder/graph_encoder_cuda.cu \
-  -Icpp/src/encoder -lcublas -o /tmp/encoder_cuda_example
+  -Icpp/src/encoder -o /tmp/encoder_cuda_example
 
 /tmp/encoder_cuda_example
 ```
