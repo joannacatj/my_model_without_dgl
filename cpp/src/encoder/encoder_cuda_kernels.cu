@@ -48,8 +48,7 @@ __global__ void DegreeEmbeddingKernel(const int64_t* in_degree,
   int64_t n = idx / feat_dim;
   int64_t d = idx % feat_dim;
   int64_t deg = in_degree[n];
-  if (deg < 0) deg = 0;
-  if (deg > max_degree) deg = max_degree;
+  deg = max((int64_t)0, min((int64_t)deg, (int64_t)max_degree));
   out[idx] = emb_table[deg * feat_dim + d];
 }
 
