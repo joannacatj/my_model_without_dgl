@@ -195,6 +195,10 @@ DataGraph LoadGraphLikeDemoPy(const std::string& graph_path, const std::string& 
 
   g.adj.assign(static_cast<size_t>(g.num_nodes), {});
   for (size_t i = 0; i < g.src.size(); ++i) g.adj[static_cast<size_t>(g.src[i])].push_back(g.dst[i]);
+  for (auto& nbrs : g.adj) {
+    std::sort(nbrs.begin(), nbrs.end());
+    nbrs.erase(std::unique(nbrs.begin(), nbrs.end()), nbrs.end());
+  }
   return g;
 }
 
@@ -457,6 +461,10 @@ struct Matcher {
       q_adj[e.first].push_back(e.second);
       q_adj[e.second].push_back(e.first);
     }
+    for (auto& nbrs : q_adj) {
+      std::sort(nbrs.begin(), nbrs.end());
+      nbrs.erase(std::unique(nbrs.begin(), nbrs.end()), nbrs.end());
+    }
   }
 
   std::vector<int64_t> QueryOrder() {
@@ -481,6 +489,15 @@ struct Matcher {
   }
 
   std::vector<int64_t> Candidates(int64_t qn) {
+    auto has_data_edge = [&](int64_t u, int64_t v) {
+      const auto& nbrs = data->adj[static_cast<size_t>(u)];
+      return std::binary_search(nbrs.begin(), nbrs.end(), v);
+    };
+    auto has_query_edge = [&](int64_t u, int64_t v) {
+      const auto& nbrs = q_adj[static_cast<size_t>(u)];
+      return std::binary_search(nbrs.begin(), nbrs.end(), v);
+    };
+
     std::unordered_set<int64_t> used;
     for (auto& kv : mapping) used.insert(kv.second);
     std::vector<int64_t> c;
@@ -488,6 +505,21 @@ struct Matcher {
       if (used.count(n)) continue;
       if (data->feat_id[n] != query->feat_id[qn]) continue;
       if (data->adj[n].size() < q_adj[qn].size()) continue;
+
+      // Topology / edge consistency check:
+      // For every already-matched query node q_m, if (qn, q_m) is an edge in query,
+      // then candidate n must connect to mapped data node d_m.
+      bool ok = true;
+      for (const auto& kv : mapping) {
+        int64_t q_m = kv.first;
+        int64_t d_m = kv.second;
+        if (has_query_edge(qn, q_m) && !has_data_edge(n, d_m)) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+
       c.push_back(n);
     }
     return c;
