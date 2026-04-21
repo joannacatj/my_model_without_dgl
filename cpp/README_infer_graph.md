@@ -215,3 +215,27 @@ nvcc -std=c++17 \
 - Python 端会加载**已训练 checkpoint**并运行真实 `encoder`。
 - CUDA 端会读取**导出参数**（bin + manifest + export_config）并运行 `GraphEncoderCUDA`。
 - 两边使用同一组固定图结构输入，输出字段一致：`graph_feature` 与 `all_node_features`。
+
+### Decoder 验证（新增）
+
+Python（已训练模型直接调用 decoder）：
+
+```bash
+python cpp/tests/decoder_python_example.py \
+  --checkpoint checkpoints/wikics/gin_checkpoint.pth \
+  --config-path .
+```
+
+CUDA（读取导出参数运行 `GraphTransformerDecoderCUDA`）：
+
+```bash
+nvcc -std=c++17 \
+  cpp/tests/decoder_cuda_example.cu \
+  cpp/src/decoder/graph_transformer_decoder_cuda.cu \
+  -Icpp/src/decoder -o /tmp/decoder_cuda_example
+
+/tmp/decoder_cuda_example \
+  --manifest checkpoints/wikics/export_cpp/weights_manifest.json \
+  --weights checkpoints/wikics/export_cpp/graphdecoder_weights.bin \
+  --config checkpoints/wikics/export_cpp/export_config.json
+```
