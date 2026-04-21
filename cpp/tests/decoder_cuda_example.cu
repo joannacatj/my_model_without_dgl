@@ -2,6 +2,7 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -35,7 +36,14 @@ int64_t Cfg(const std::string& c,const std::string& k,int64_t d){ std::regex re(
 float* Load(const std::vector<uint8_t>& b, const TensorMeta& t){
   float* d=nullptr; cudaMalloc(&d,t.nbytes); cudaMemcpy(d,b.data()+t.offset,t.nbytes,cudaMemcpyHostToDevice); return d;
 }
-int64_t InferLayers(const std::string& m){ std::regex re(R"(decoder\.layers\.(\d+)\.attention\.wq\.weight)"); int64_t mx=-1; for(auto it=std::sregex_iterator(m.begin(),m.end(),re);it!=std::sregex_iterator();++it) mx=std::max(mx,std::stoll((*it)[1])); return mx+1; }
+int64_t InferLayers(const std::string& m){
+  std::regex re(R"(decoder\.layers\.(\d+)\.attention\.wq\.weight)");
+  int64_t mx = -1;
+  for (auto it = std::sregex_iterator(m.begin(), m.end(), re); it != std::sregex_iterator(); ++it) {
+    mx = std::max(mx, static_cast<int64_t>(std::stoll((*it)[1])));
+  }
+  return mx + 1;
+}
 
 }  // namespace
 
