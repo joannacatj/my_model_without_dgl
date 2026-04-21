@@ -313,3 +313,13 @@ g++ -std=c++17 \
   -Icpp/src -o /tmp/preprocess_cpp_example \
   && /tmp/preprocess_cpp_example
 ```
+
+CUDA 版本（`__global__` kernel 实现，结果一致优先）：
+
+```bash
+nvcc -std=c++17 \
+  cpp/tests/preprocess_cuda_example.cu \
+  cpp/src/preprocess/preprocess_cuda.cu \
+  -Icpp/src -o /tmp/preprocess_cuda_example \
+  && /tmp/preprocess_cuda_example
+```
