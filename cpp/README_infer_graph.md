@@ -243,12 +243,46 @@ nvcc -std=c++17 \
 一键对比（自动执行导出、Python/CUDA 运行、逐元素误差检查）：
 
 ```bash
-python cpp/tests/compare_decoder_outputs.py \
-  --checkpoint checkpoints/wikics/gin_checkpoint.pth \
-  --config-path . \
-  --export-dir checkpoints/wikics/export_cpp \
-  --python-device cpu \
-  --atol 1e-3
+python tools/export_for_cpp.py --checkpoint checkpoints/wikics/gin_checkpoint.pth --config-path . --output-dir checkpoints/wikics/export_cpp \
+&& python cpp/tests/decoder_python_example.py --checkpoint checkpoints/wikics/gin_checkpoint.pth --config-path . --device cpu > /tmp/decoder_py_out.txt \
+&& nvcc -std=c++17 cpp/tests/decoder_cuda_example.cu cpp/src/decoder/graph_transformer_decoder_cuda.cu -Icpp/src/decoder -o /tmp/decoder_cuda_example \
+&& /tmp/decoder_cuda_example --manifest checkpoints/wikics/export_cpp/weights_manifest.json --weights checkpoints/wikics/export_cpp/graphdecoder_weights.bin --config checkpoints/wikics/export_cpp/export_config.json > /tmp/decoder_cuda_out.txt \
+&& python - <<'PY'
+import re, sys
+from pathlib import Path
+
+def parse_shape(text):
+    m = re.search(r"decoder_output shape=\\s*\\(([^)]*)\\)", text)
+    if not m:
+        raise RuntimeError("cannot parse decoder_output shape")
+    return tuple(int(x.strip()) for x in m.group(1).split(",") if x.strip())
+
+def parse_vals(text):
+    m = re.search(r"decoder_output values=\\s*(\\[[^\\]]*\\]|[^\\n]+)", text, re.S)
+    if not m:
+        raise RuntimeError("cannot parse decoder_output values")
+    return [float(x) for x in re.findall(r"[-+]?\\d*\\.?\\d+(?:[eE][-+]?\\d+)?", m.group(1))]
+
+py_out = Path("/tmp/decoder_py_out.txt").read_text()
+cu_out = Path("/tmp/decoder_cuda_out.txt").read_text()
+py_shape, cu_shape = parse_shape(py_out), parse_shape(cu_out)
+if py_shape != cu_shape:
+    print(f"[FAIL] shape mismatch: python={py_shape}, cuda={cu_shape}")
+    sys.exit(2)
+
+py_vals, cu_vals = parse_vals(py_out), parse_vals(cu_out)
+if len(py_vals) != len(cu_vals):
+    print(f"[FAIL] value length mismatch: python={len(py_vals)}, cuda={len(cu_vals)}")
+    sys.exit(2)
+
+atol = 1e-3
+mad = max(abs(a-b) for a,b in zip(py_vals, cu_vals)) if py_vals else 0.0
+if mad > atol:
+    print(f"[FAIL] max_abs_diff={mad:.6e} > atol={atol:.6e}")
+    sys.exit(1)
+
+print(f"[PASS] shape={py_shape}, max_abs_diff={mad:.6e} <= atol={atol:.6e}")
+PY
 ```
 
 说明：
@@ -257,4 +291,4 @@ python cpp/tests/compare_decoder_outputs.py \
   - `graph_feat` 全 0.01
   - `input_feat` 全 0.02
   - `subnode_ids=[0,1,2]`，`token_mask_len=[3]`，`spd=[[0,1,2],[1,0,1],[2,1,0]]`
-- 对比脚本会先检查 `decoder_output shape`，再计算 `max_abs_diff` 并按 `--atol` 判定 PASS/FAIL。
+- 上面的 bash 命令会先检查 `decoder_output shape`，再计算 `max_abs_diff` 并按 `atol=1e-3` 判定 PASS/FAIL。
