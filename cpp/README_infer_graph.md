@@ -350,5 +350,9 @@ nvcc -std=c++17 \
 /tmp/neugn_match_cuda_demo \
   --manifest checkpoints/wikics/export_cpp/weights_manifest.json \
   --weights checkpoints/wikics/export_cpp/graphdecoder_weights.bin \
-  --config checkpoints/wikics/export_cpp/export_config.json
+  --config checkpoints/wikics/export_cpp/export_config.json \
+  --graph-path ./datasets/wikics \
+  --config-path . \
+  --num-queries 5 \
+  --seed 0
 ```
