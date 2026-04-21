@@ -338,6 +338,26 @@ nvcc -std=c++17 \
 编译运行：
 
 ```bash
+# 推荐：调试编译（便于定位 CUDA kernel 问题）
+nvcc -std=c++17 -O0 -g -G -lineinfo \
+  cpp/tests/neugn_match_cuda_demo.cu \
+  cpp/src/encoder/encoder_cuda_kernels.cu \
+  cpp/src/encoder/graph_encoder_cuda.cu \
+  cpp/src/decoder/graph_transformer_decoder_cuda.cu \
+  cpp/src/preprocess/preprocess_utils.cpp \
+  -Icpp/src/encoder -Icpp/src/decoder -Icpp/src/preprocess \
+  -o /tmp/neugn_match_cuda_demo_debug
+
+CUDA_LAUNCH_BLOCKING=1 /tmp/neugn_match_cuda_demo_debug \
+  --manifest checkpoints/wikics/export_cpp/weights_manifest.json \
+  --weights checkpoints/wikics/export_cpp/graphdecoder_weights.bin \
+  --config checkpoints/wikics/export_cpp/export_config.json \
+  --graph-path /home/hujiayue/my_cuda_graph_matching/data/ \
+  --config-path . \
+  --num-queries 5 \
+  --seed 0
+
+# 常规：发布编译（更快）
 nvcc -std=c++17 \
   cpp/tests/neugn_match_cuda_demo.cu \
   cpp/src/encoder/encoder_cuda_kernels.cu \
