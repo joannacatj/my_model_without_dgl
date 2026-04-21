@@ -489,6 +489,19 @@ struct Matcher {
   }
 
   std::vector<int64_t> Candidates(int64_t qn) {
+    std::unordered_set<int64_t> used;
+    for (auto& kv : mapping) used.insert(kv.second);
+    std::vector<int64_t> c;
+    for (int64_t n = 0; n < data->num_nodes; ++n) {
+      if (used.count(n)) continue;
+      if (data->feat_id[n] != query->feat_id[qn]) continue;
+      if (data->adj[n].size() < q_adj[qn].size()) continue;
+      c.push_back(n);
+    }
+    return c;
+  }
+
+  bool CheckJoinTopology(int64_t qn, int64_t dn) const {
     auto has_data_edge = [&](int64_t u, int64_t v) {
       const auto& nbrs = data->adj[static_cast<size_t>(u)];
       return std::binary_search(nbrs.begin(), nbrs.end(), v);
@@ -498,31 +511,17 @@ struct Matcher {
       return std::binary_search(nbrs.begin(), nbrs.end(), v);
     };
 
-    std::unordered_set<int64_t> used;
-    for (auto& kv : mapping) used.insert(kv.second);
-    std::vector<int64_t> c;
-    for (int64_t n = 0; n < data->num_nodes; ++n) {
-      if (used.count(n)) continue;
-      if (data->feat_id[n] != query->feat_id[qn]) continue;
-      if (data->adj[n].size() < q_adj[qn].size()) continue;
-
-      // Topology / edge consistency check:
-      // For every already-matched query node q_m, if (qn, q_m) is an edge in query,
-      // then candidate n must connect to mapped data node d_m.
-      bool ok = true;
-      for (const auto& kv : mapping) {
-        int64_t q_m = kv.first;
-        int64_t d_m = kv.second;
-        if (has_query_edge(qn, q_m) && !has_data_edge(n, d_m)) {
-          ok = false;
-          break;
-        }
+    // Join-stage topology consistency:
+    // for every already-matched query node q_m,
+    // if (qn, q_m) is an edge in query, then (dn, d_m) must be an edge in data.
+    for (const auto& kv : mapping) {
+      const int64_t q_m = kv.first;
+      const int64_t d_m = kv.second;
+      if (has_query_edge(qn, q_m) && !has_data_edge(dn, d_m)) {
+        return false;
       }
-      if (!ok) continue;
-
-      c.push_back(n);
     }
-    return c;
+    return true;
   }
 
   void DFS(const std::vector<int64_t>& order, int64_t idx) {
@@ -542,6 +541,7 @@ struct Matcher {
       std::sort(cands.begin(), cands.end());
     }
     for (auto v : cands) {
+      if (!CheckJoinTopology(qn, v)) continue;
       mapping[qn] = v;
       DFS(order, idx + 1);
       if (found) return;
