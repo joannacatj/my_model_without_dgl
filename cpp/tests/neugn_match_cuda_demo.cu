@@ -360,10 +360,20 @@ struct Wrapper {
 
     int64_t *d_map = nullptr, *d_prefix = nullptr, *d_sub = nullptr, *d_tml = nullptr, *d_spd = nullptr, *d_cands = nullptr;
     float *d_input = nullptr, *d_out = nullptr, *d_scores = nullptr;
-    cudaMalloc(&d_map, sizeof(int64_t) * std::max<int64_t>(seq, 1));
-    cudaMalloc(&d_prefix, sizeof(int64_t) * std::max<int64_t>(seq, 1));
-    cudaMalloc(&d_sub, sizeof(int64_t) * std::max<int64_t>(seq, 1));
-    cudaMalloc(&d_tml, sizeof(int64_t));
+    auto fallback_zero_scores = [&]() {
+      for (auto c : cands) out[c] = 0.0f;
+      return out;
+    };
+
+    cudaError_t st = cudaSuccess;
+    st = cudaMalloc(&d_map, sizeof(int64_t) * std::max<int64_t>(seq, 1));
+    if (st != cudaSuccess) return fallback_zero_scores();
+    st = cudaMalloc(&d_prefix, sizeof(int64_t) * std::max<int64_t>(seq, 1));
+    if (st != cudaSuccess) { cudaFree(d_map); return fallback_zero_scores(); }
+    st = cudaMalloc(&d_sub, sizeof(int64_t) * std::max<int64_t>(seq, 1));
+    if (st != cudaSuccess) { cudaFree(d_map); cudaFree(d_prefix); return fallback_zero_scores(); }
+    st = cudaMalloc(&d_tml, sizeof(int64_t));
+    if (st != cudaSuccess) { cudaFree(d_map); cudaFree(d_prefix); cudaFree(d_sub); return fallback_zero_scores(); }
     if (seq > 0) {
       cudaMemcpy(d_map, h_map.data(), sizeof(int64_t) * seq, cudaMemcpyHostToDevice);
       cudaMemcpy(d_prefix, h_prefix.data(), sizeof(int64_t) * seq, cudaMemcpyHostToDevice);
@@ -371,19 +381,49 @@ struct Wrapper {
     }
     cudaMemcpy(d_tml, &seq, sizeof(int64_t), cudaMemcpyHostToDevice);
 
-    cudaMalloc(&d_input, sizeof(float) * std::max<int64_t>(seq, 1) * feat_dim);
+    st = cudaMalloc(&d_input, sizeof(float) * std::max<int64_t>(seq, 1) * feat_dim);
+    if (st != cudaSuccess) {
+      cudaFree(d_tml); cudaFree(d_sub); cudaFree(d_prefix); cudaFree(d_map);
+      return fallback_zero_scores();
+    }
     if (seq > 0) GatherInputKernel<<<(seq * feat_dim + 255) / 256, 256>>>(d_data_node_feat, d_map, seq, feat_dim, d_input);
 
     if (seq > 0) {
-      cudaMalloc(&d_spd, sizeof(int64_t) * seq * seq);
+      st = cudaMalloc(&d_spd, sizeof(int64_t) * seq * seq);
+      if (st != cudaSuccess) {
+        cudaFree(d_input); cudaFree(d_tml); cudaFree(d_sub); cudaFree(d_prefix); cudaFree(d_map);
+        return fallback_zero_scores();
+      }
       GatherSPDKernel<<<(seq * seq + 255) / 256, 256>>>(d_query_spd, d_prefix, seq, qn, d_spd);
     }
-    cudaMalloc(&d_out, sizeof(float) * (seq + 1) * feat_dim);
+    st = cudaMalloc(&d_out, sizeof(float) * (seq + 1) * feat_dim);
+    if (st != cudaSuccess) {
+      if (d_spd) cudaFree(d_spd);
+      cudaFree(d_input); cudaFree(d_tml); cudaFree(d_sub); cudaFree(d_prefix); cudaFree(d_map);
+      return fallback_zero_scores();
+    }
+
+    if (!d_query_graph_feat || !d_input || !d_sub || !d_tml || !d_out) {
+      cudaFree(d_out); if (d_spd) cudaFree(d_spd);
+      cudaFree(d_input); cudaFree(d_tml); cudaFree(d_sub); cudaFree(d_prefix); cudaFree(d_map);
+      return fallback_zero_scores();
+    }
     DecoderIO io{d_query_graph_feat, d_input, d_sub, d_tml, d_spd, 1, seq, feat_dim, d_out};
     dec->Forward(io);
 
-    cudaMalloc(&d_cands, sizeof(int64_t) * cands.size());
-    cudaMalloc(&d_scores, sizeof(float) * cands.size());
+    st = cudaMalloc(&d_cands, sizeof(int64_t) * cands.size());
+    if (st != cudaSuccess) {
+      cudaFree(d_out); if (d_spd) cudaFree(d_spd);
+      cudaFree(d_input); cudaFree(d_tml); cudaFree(d_sub); cudaFree(d_prefix); cudaFree(d_map);
+      return fallback_zero_scores();
+    }
+    st = cudaMalloc(&d_scores, sizeof(float) * cands.size());
+    if (st != cudaSuccess) {
+      cudaFree(d_cands);
+      cudaFree(d_out); if (d_spd) cudaFree(d_spd);
+      cudaFree(d_input); cudaFree(d_tml); cudaFree(d_sub); cudaFree(d_prefix); cudaFree(d_map);
+      return fallback_zero_scores();
+    }
     cudaMemcpy(d_cands, cands.data(), sizeof(int64_t) * cands.size(), cudaMemcpyHostToDevice);
     float* d_pred = d_out + seq * feat_dim;
     CosineScoresKernel<<<(cands.size() + 255) / 256, 256>>>(d_pred, d_data_node_feat, d_cands, static_cast<int64_t>(cands.size()), feat_dim, d_scores);
