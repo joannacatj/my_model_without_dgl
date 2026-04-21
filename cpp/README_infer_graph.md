@@ -292,3 +292,24 @@ PY
   - `input_feat` 全 0.02
   - `subnode_ids=[0,1,2]`，`token_mask_len=[3]`，`spd=[[0,1,2],[1,0,1],[2,1,0]]`
 - 上面的 bash 命令会先检查 `decoder_output shape`，再计算 `max_abs_diff` 并按 `atol=1e-3` 判定 PASS/FAIL。
+
+---
+
+## 8. 预处理 C++ 版本（结果一致优先）
+
+在 `cpp/src/preprocess/` 提供了与 `NeuGN/utils.py` 对齐的 CPU 参考实现：
+
+- `compute_rwse`：随机游走结构编码（dense 方式，返回 `[N, k_steps]`）。
+- `compute_subgraph_spd`：支持 BFS / Floyd-Warshall，并统一截断到 `max_spd+1`。
+- `graph2path_v2_pure`：路径生成逻辑（新增 deterministic 模式，便于对齐验收）。
+- `simple_node_subgraph`：节点子图抽取与本地重编号。
+
+可用以下命令快速编译/运行示例：
+
+```bash
+g++ -std=c++17 \
+  cpp/tests/preprocess_cpp_example.cpp \
+  cpp/src/preprocess/preprocess_utils.cpp \
+  -Icpp/src -o /tmp/preprocess_cpp_example \
+  && /tmp/preprocess_cpp_example
+```
