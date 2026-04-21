@@ -96,7 +96,9 @@ __global__ void GINAggregateKernel(const int64_t* row_ptr,
   int64_t end = row_ptr[n + 1];
   for (int64_t e = begin; e < end; ++e) {
     int64_t src = col_idx[e];
-    acc += x[src * feat_dim + d];
+    if (src >= 0 && src < num_nodes) {
+      acc += x[src * feat_dim + d];
+    }
   }
   out[idx] = acc;
 }
@@ -199,7 +201,7 @@ __global__ void WriteColumnNormalizedKernel(const float* col_sum,
 }
 
 __global__ void ScatterCSRCountsKernel(const int64_t* unique_keys,
-                                       const int64_t* run_counts,
+                                       const int* run_counts,
                                        int num_runs,
                                        int64_t num_nodes,
                                        int64_t* row_ptr) {
@@ -207,7 +209,7 @@ __global__ void ScatterCSRCountsKernel(const int64_t* unique_keys,
   if (i >= num_runs) return;
   int64_t key = unique_keys[i];
   if (key >= 0 && key < num_nodes) {
-    row_ptr[key + 1] = run_counts[i];
+    row_ptr[key + 1] = static_cast<int64_t>(run_counts[i]);
   }
 }
 
@@ -273,10 +275,10 @@ void BuildCSRFromCOOCUDA(int64_t num_nodes,
 
   // 2) Run-length encode sorted keys -> unique dst ids and counts.
   int64_t* d_unique = nullptr;
-  int64_t* d_counts = nullptr;
+  int* d_counts = nullptr;
   int* d_num_runs = nullptr;
   cudaMalloc(&d_unique, sizeof(int64_t) * num_edges);
-  cudaMalloc(&d_counts, sizeof(int64_t) * num_edges);
+  cudaMalloc(&d_counts, sizeof(int) * num_edges);
   cudaMalloc(&d_num_runs, sizeof(int));
 
   void* rle_temp = nullptr;
