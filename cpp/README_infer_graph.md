@@ -323,3 +323,32 @@ nvcc -std=c++17 \
   -Icpp/src -o /tmp/preprocess_cuda_example \
   && /tmp/preprocess_cuda_example
 ```
+
+---
+
+## 9. C++/CUDA NeuGN 匹配流程 Demo（含 steps + 时间统计）
+
+提供 `cpp/tests/neugn_match_cuda_demo.cu`，流程对齐 `demo.py` 的核心思路：
+
+- 数据图/查询图编码由 CUDA `GraphEncoderCUDA` 完成；
+- 查询路径与 SPD 由 preprocess 路径构建；
+- 候选重排分数由 CUDA `GraphTransformerDecoderCUDA` + GPU cosine 打分完成；
+- 统计 baseline 与 `use_neugn=true` 两种模式的 `steps` 和 `time_ms`。
+
+编译运行：
+
+```bash
+nvcc -std=c++17 \
+  cpp/tests/neugn_match_cuda_demo.cu \
+  cpp/src/encoder/encoder_cuda_kernels.cu \
+  cpp/src/encoder/graph_encoder_cuda.cu \
+  cpp/src/decoder/graph_transformer_decoder_cuda.cu \
+  cpp/src/preprocess/preprocess_utils.cpp \
+  -Icpp/src/encoder -Icpp/src/decoder -Icpp/src/preprocess \
+  -o /tmp/neugn_match_cuda_demo
+
+/tmp/neugn_match_cuda_demo \
+  --manifest checkpoints/wikics/export_cpp/weights_manifest.json \
+  --weights checkpoints/wikics/export_cpp/graphdecoder_weights.bin \
+  --config checkpoints/wikics/export_cpp/export_config.json
+```
