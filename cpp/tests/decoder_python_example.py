@@ -28,9 +28,9 @@ def main():
     Dim = cfg.decoder_config.dim
     Feat = cfg.encoder_config.graph_feature_dim
 
-    torch.manual_seed(0)
-    graph_feat = torch.randn(B, 1, Dim, device=device)
-    input_feat = torch.randn(B, Seq, Feat, device=device)
+    # 与 CUDA 示例保持完全一致的固定输入，便于逐元素比对。
+    graph_feat = torch.full((B, 1, Dim), 0.01, dtype=torch.float32, device=device)
+    input_feat = torch.full((B, Seq, Feat), 0.02, dtype=torch.float32, device=device)
     subnode_ids = torch.tensor([[0, 1, 2]], dtype=torch.long, device=device)
     token_mask_len = torch.tensor([Seq], dtype=torch.long, device=device)
 

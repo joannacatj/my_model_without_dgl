@@ -239,3 +239,22 @@ nvcc -std=c++17 \
   --weights checkpoints/wikics/export_cpp/graphdecoder_weights.bin \
   --config checkpoints/wikics/export_cpp/export_config.json
 ```
+
+一键对比（自动执行导出、Python/CUDA 运行、逐元素误差检查）：
+
+```bash
+python cpp/tests/compare_decoder_outputs.py \
+  --checkpoint checkpoints/wikics/gin_checkpoint.pth \
+  --config-path . \
+  --export-dir checkpoints/wikics/export_cpp \
+  --python-device cpu \
+  --atol 1e-3
+```
+
+说明：
+
+- 当前 `decoder_python_example.py` 与 `decoder_cuda_example.cu` 的输入已统一为固定常量：
+  - `graph_feat` 全 0.01
+  - `input_feat` 全 0.02
+  - `subnode_ids=[0,1,2]`，`token_mask_len=[3]`，`spd=[[0,1,2],[1,0,1],[2,1,0]]`
+- 对比脚本会先检查 `decoder_output shape`，再计算 `max_abs_diff` 并按 `--atol` 判定 PASS/FAIL。
